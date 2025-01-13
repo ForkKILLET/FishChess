@@ -1,0 +1,32 @@
+.box {
+    color: #703a0e;
+    background-color: #f0d9b5;
+    border: 2px solid #b58863;
+}
+
+button {
+    padding: 0;
+
+    color: inherit;
+    background-color: transparent;
+    text-decoration: underline;
+    font-size: inherit;
+
+    border: none;
+    outline: none;
+
+    cursor: pointer;
+}
+
+button:disabled {
+    text-decoration: line-through;
+    cursor: not-allowed;
+}
+
+body {
+    padding: 0;
+}
+
+#app {
+    padding: 10px;
+}
