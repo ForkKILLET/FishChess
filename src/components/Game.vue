@@ -10,22 +10,34 @@ import {
     isSamePos,
     doMove,
     isBeingChecked,
+    FISH_TAKING_MATRIX,
+    takingMatrixToString,
+    takingMatrixFromString,
+    createEmptyChessboard,
 } from '../common'
 import Chessboard from './Chessboard.vue'
 import packageJson from '../../package.json'
 import dedent from 'dedent'
 
-const game = reactive({} as Game)
+const game = reactive<Game>({
+    state: 'finished',
+    activePlayer: 'white',
+    activePlayerIsBeingChecked: false,
+    chessboard: createEmptyChessboard(),
+    takingMatrix: FISH_TAKING_MATRIX,
+})
 
 const messages = reactive([] as string[])
 const addMessage = (message: string) => messages.push(message)
 
 const startGame = () => {
     addMessage('Game started!')
+    selectedCell.value = null
     game.state = 'playing'
     game.activePlayer = 'white'
     game.activePlayerIsBeingChecked = false
     game.chessboard = createInitialChessboard()
+    takingMatrixParsingResult.value = { type: 'idle' }
 }
 
 const dropGame = () => {
@@ -52,12 +64,12 @@ const selector = computed((): CellSelector => {
             const { piece } = cell
             if (! piece) return false
             if (piece.color !== game.activePlayer) return false
-            const moves = getMoves(cell as CellN, game.chessboard, true)
+            const moves = getMoves(cell as CellN, game, true)
             return moves.length > 0
         }
     }
     else {  
-        const moves = getMoves(target as CellN, game.chessboard, true)
+        const moves = getMoves(target as CellN, game, true)
         return cell => moves.some(move => isSamePos(move, cell))
     }
 })
@@ -78,12 +90,12 @@ const onSelect = (target: Cell) => {
         selectedCell.value = null
         game.activePlayer = game.activePlayer === 'white' ? 'black' : 'white'
 
-        game.activePlayerIsBeingChecked = isBeingChecked(game.activePlayer, game.chessboard)
+        game.activePlayerIsBeingChecked = isBeingChecked(game.activePlayer, game)
 
         const allPossibleMoves = game.chessboard
             .flatMap(row => row)
             .filter(cell => cell.piece && cell.piece.color === game.activePlayer)
-            .flatMap(cell => getMoves(cell as CellN, game.chessboard, true))
+            .flatMap(cell => getMoves(cell as CellN, game, true))
 
         if (! allPossibleMoves.length) {
             finishGame()
@@ -101,7 +113,27 @@ const deSelect = () => {
 addMessage(dedent`
     Welcome to Fish Chess! (<i>v${packageJson.version}, <a href="//github.com/ForkKILLET/FishChess">GitHub</a></i>) <br />
 `)
-startGame()
+
+const activeTab = ref<'messages' | 'settings'>('messages')
+
+const takingMatrixEl = ref<HTMLPreElement | null>(null)
+const takingMatrixParsingResult = ref<
+    | { type: 'error', error: string }
+    | { type: 'ok' }
+    | { type: 'idle' }
+>({  type: 'idle' })
+
+const submitTakingMatrix = () => {
+    if (game.state === 'playing') return
+    try {
+        const takingMatrix = takingMatrixFromString(takingMatrixEl.value!.innerHTML.replace(/<br>/g, '\n'))
+        game.takingMatrix = takingMatrix
+        takingMatrixParsingResult.value = { type: 'ok' }
+    }
+    catch (error) {
+        takingMatrixParsingResult.value = { type: 'error', error: (error as Error).message }
+    }
+}
 </script>
 
 <template>
@@ -119,9 +151,25 @@ startGame()
             <div class="toolbar box">
                 <button v-if="game.state === 'finished'" @click="startGame">New Game</button>
                 <button v-else="game.state === 'playing'" @click="dropGame">Drop Game</button>
+                
+                <button @click="activeTab = 'settings'">Settings</button>
+                <button @click="activeTab = 'messages'">Messages</button>
             </div>
             <div class="messages box">
-                <div v-for="message in messages" class="message" v-html="message"></div>
+                <template v-if="activeTab === 'messages'">
+                    <div v-for="message in messages" class="message" v-html="message"></div>
+                </template>
+                <template v-else-if="activeTab === 'settings'">
+                    <div>Taking Matrix</div>
+                    <pre
+                        ref="takingMatrixEl"
+                        contenteditable="true"
+                        spellcheck="false"
+                    >{{ takingMatrixToString(game.takingMatrix) }}</pre>
+                    <button :disabled="game.state === 'playing'" @click="submitTakingMatrix">Submit</button>
+                    <div v-if="takingMatrixParsingResult.type === 'error'" class="taking-matrix-parsing-error">{{ takingMatrixParsingResult }}</div>
+                    <div v-else-if="takingMatrixParsingResult.type === 'ok'">Modified!</div>
+                </template>
             </div>
         </div>
     </div>
@@ -144,11 +192,18 @@ startGame()
 .toolbar {
     padding: 10px;
 }
+.toolbar button {
+    margin-right: 10px;
+}
 
 .messages {
     flex-grow: 1;
     margin-top: 10px;
     padding: 10px;
     font-family: sans-serif;
+}
+
+.taking-matrix-parsing-error {
+    color: #f00;
 }
 </style>

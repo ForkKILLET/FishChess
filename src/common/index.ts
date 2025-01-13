@@ -1,6 +1,9 @@
 import dedent from 'dedent'
 
-export type PieceType = 'pawn' | 'rook' | 'knight' | 'bishop' | 'queen' | 'king'
+export const PIECE_TYPES = [ 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king' ] as const
+export const PIECE_SYMBOLS = [ 'P', 'N', 'B', 'R', 'Q', 'K' ] as const
+
+export type PieceType = typeof PIECE_TYPES[number]
 
 export type Cell = Pos & {
     piece: Piece | null
@@ -20,7 +23,7 @@ export type Piece = {
 
 export type Chessboard = Cell[][]
 
-export const PIECE_TO_STRING: Record<PieceType, string> = {
+export const PIECE_TO_SYMBOL: Record<PieceType, string> = {
     pawn:   'P',
     rook:   'R',
     knight: 'N',
@@ -29,7 +32,7 @@ export const PIECE_TO_STRING: Record<PieceType, string> = {
     king:   'K',
 }
 
-export const PIECE_FROM_STRING: Record<string, PieceType> = {
+export const PIECE_FROM_SYMBOL: Record<string, PieceType> = {
     P: 'pawn',
     R: 'rook',
     N: 'knight',
@@ -40,12 +43,12 @@ export const PIECE_FROM_STRING: Record<string, PieceType> = {
 
 export const pieceToString = (piece: Piece | null): string => {
     if (piece === null) return '.'
-    const str = PIECE_TO_STRING[piece.type]
+    const str = PIECE_TO_SYMBOL[piece.type]
     return piece.color === 'white' ? str : str.toLowerCase()
 }
 export const pieceFromString = (str: string): Piece | null => {
     if (str === '.') return null
-    const piece = PIECE_FROM_STRING[str.toUpperCase()]
+    const piece = PIECE_FROM_SYMBOL[str.toUpperCase()]
     const color = str === str.toUpperCase() ? 'white' : 'black'
     return { type: piece, color }
 }
@@ -81,6 +84,17 @@ export const createInitialChessboard = (): Chessboard => chessboardFromString(de
     RNBQKBNR
 `)
 
+export const createEmptyChessboard = (): Chessboard => chessboardFromString(dedent`
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+    ........
+`)
+
 export type Player = 'white' | 'black'
 
 export interface Pos {
@@ -98,20 +112,14 @@ export const insideChessboard = (r: number, c: number): boolean => (
     r >= 0 && r < 8 && c >= 0 && c < 8
 )
 
-export type MoveCalculator = (cell: CellN, chessboard: Chessboard) => Pos[]
+export type MoveCalculator = (cell: CellN, game: Game) => Pos[]
 
-export const canTake = (self: Piece, target: Piece): boolean => {
+export const canTake = (self: Piece, target: Piece, takingMatrix: TakingMatrix): boolean => {
     if (self.color === target.color) return false
-    if (target.type === 'king') return true
-    if (target.type === 'pawn') return self.type === 'knight'
-    if (target.type === 'knight') return self.type === 'bishop'
-    if (target.type === 'bishop') return self.type === 'rook'
-    if (target.type === 'rook') return self.type === 'queen'
-    if (target.type === 'queen') return self.type === 'pawn'
-    return false
+    return takingMatrix[self.type][target.type]
 }
 
-export const pawnMoveCalculator = ({ piece, r, c }: CellN, chessboard: Chessboard): Pos[] => {
+export const pawnMoveCalculator = ({ piece, r, c }: CellN, { chessboard, takingMatrix }: Game): Pos[] => {
     const moves: Pos[] = []
     const dr = piece.color === 'white' ? -1 : 1
     
@@ -126,7 +134,7 @@ export const pawnMoveCalculator = ({ piece, r, c }: CellN, chessboard: Chessboar
     for (const dc of [ -1, 1 ]) {
         if (! insideChessboard(r + dr, c + dc)) continue
         const target = chessboard[r + dr][c + dc].piece
-        if (target && canTake(piece, target)) {
+        if (target && canTake(piece, target, takingMatrix)) {
             moves.push({ r: r + dr, c: c + dc })
         }
     }
@@ -134,7 +142,7 @@ export const pawnMoveCalculator = ({ piece, r, c }: CellN, chessboard: Chessboar
 }
 
 export const createMoveCalculatorFromDeltas = (deltas: Pos[], limit = Infinity): MoveCalculator => {
-    return ({ piece, r: r0, c: c0 }: CellN, chessboard: Chessboard): Pos[] => {
+    return ({ piece, r: r0, c: c0 }: CellN, { chessboard, takingMatrix }: Game): Pos[] => {
         const moves: Pos[] = []
         for (const { r: dr, c: dc } of deltas) {
             for (let i = 1; i <= limit; i++) {
@@ -143,7 +151,7 @@ export const createMoveCalculatorFromDeltas = (deltas: Pos[], limit = Infinity):
                 if (! insideChessboard(r, c)) break
                 const target = chessboard[r][c].piece
                 if (target) {
-                    if (canTake(piece, target)) moves.push({ r, c })
+                    if (canTake(piece, target, takingMatrix)) moves.push({ r, c })
                     break
                 }
                 moves.push({ r, c })
@@ -192,18 +200,19 @@ export const MOVE_CALCULATORS: Record<PieceType, MoveCalculator> = {
     king: kingMoveCalculator,
 }
 
-export const getMoves = (cell: CellN, chessboard: Chessboard, cannotBeChecked: boolean): Pos[] => {
-    const moves = MOVE_CALCULATORS[cell.piece.type](cell, chessboard)
+export const getMoves = (cell: CellN, game: Game, cannotBeChecked: boolean): Pos[] => {
+    const moves = MOVE_CALCULATORS[cell.piece.type](cell, game)
     return cannotBeChecked
         ? moves.filter(move => {
-            const newChessboard = tryMove(cell, move, chessboard)
-            const isSafe = ! isBeingChecked(cell.piece.color, newChessboard)
+            const newChessboard = tryMove(cell, move, game.chessboard)
+            const isSafe = ! isBeingChecked(cell.piece.color, { ...game, chessboard: newChessboard })
             return isSafe
         })
         : moves
 }
 
-export const isBeingChecked = (player: Player, chessboard: Chessboard) => {
+export const isBeingChecked = (player: Player, game: Game) => {
+    const chessboard = game.chessboard
     const king = chessboard
         .flat()
         .find(cell => cell.piece?.type === 'king' && cell.piece.color === player)
@@ -212,7 +221,7 @@ export const isBeingChecked = (player: Player, chessboard: Chessboard) => {
     return chessboard
         .flat()
         .filter((cell): cell is CellN => !! cell.piece && cell.piece.color !== player)
-        .some(cell => getMoves(cell, chessboard, false).some(pos => isSamePos(pos, king)))
+        .some(cell => getMoves(cell, game, false).some(pos => isSamePos(pos, king)))
 }
 
 export const cloneChessboard = (chessboard: Chessboard): Chessboard => chessboard
@@ -243,4 +252,62 @@ export type Game = {
     chessboard: Chessboard
     activePlayer: Player
     activePlayerIsBeingChecked: boolean
+    takingMatrix: TakingMatrix
 }
+
+export type TakingMatrix = Record<PieceType, Record<PieceType, boolean>>
+
+export const takingMatrixToString = (takingMatrix: TakingMatrix): string => (
+    `*${ PIECE_SYMBOLS.join('') }\n` + PIECE_SYMBOLS.map(piece1 => (
+        `${ piece1 }${
+            PIECE_SYMBOLS.map(piece2 => (
+                takingMatrix[PIECE_FROM_SYMBOL[piece1]][PIECE_FROM_SYMBOL[piece2]] ? 'X' : '.'
+            )).join('')
+        }`
+    )).join('\n')
+)
+
+export const takingMatrixFromString = (str: string): TakingMatrix => {
+    const [ header, ...content ] = str.trim().split('\n')
+    const HEADER = `*${ PIECE_SYMBOLS.join('') }`
+    if (header !== HEADER) throw new Error(`Invalid taking matrix: invalid header. Expected '${ HEADER }', got '${ header }'.`)
+    return Object.fromEntries(content.map((line, i) => {
+        if (line.length !== 7) throw new Error(`Invalid taking matrix: line ${ i + 2 } has invalid length. Expected 7, got ${ line.length }.`)
+        const [ piece1, ...xs ] = line.split('')
+        if (piece1 !== PIECE_SYMBOLS[i]) throw new Error(`Invalid taking matrix: invalid initial character of line ${ i + 2 }. Expected '${ PIECE_SYMBOLS[i] }', got ${ line[0] }.`)
+        return [ PIECE_TYPES[i], Object.fromEntries(xs.map((x, j) => {
+            if (x !== 'X' && x !== '.') throw new Error(`Invalid taking matrix: vaalue must be either 'X' or '.'.`)
+            return [ PIECE_TYPES[j], x === 'X' ]
+        })) ]
+    })) as TakingMatrix
+}
+
+export const FISH_TAKING_MATRIX = takingMatrixFromString(dedent`
+    *PNBRQK
+    PX...XX
+    NXX...X
+    B.XX..X
+    R..XX.X
+    Q...XXX
+    KXXXXXX
+`)
+
+export const FISH_INVERSED_TAKING_MATRIX = takingMatrixFromString(dedent`
+    *PNBRQK
+    PXX...X
+    N.XX..X
+    B..XX.X
+    R...XXX
+    QX...XX
+    KXXXXXX
+`)
+
+export const CLASSIC_TAKING_MATRIX = takingMatrixFromString(dedent`
+    *PNBRQK
+    PXXXXXX
+    NXXXXXX
+    BXXXXXX
+    RXXXXXX
+    QXXXXXX
+    KXXXXXX
+`)
